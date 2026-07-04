@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
-import { 
-  StyleSheet, 
-  Text, 
-  View, 
-  TextInput, 
-  TouchableOpacity, 
-  ScrollView, 
-  useWindowDimensions, 
+import {
+  StyleSheet,
+  Text,
+  View,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+  useWindowDimensions,
   Platform,
   Image,
   Clipboard,
-  Modal
+  Modal,
+  ActivityIndicator
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,7 +39,7 @@ export default function Index() {
    */
   const { width } = useWindowDimensions();
 
-  
+
   const router = useRouter();
   const [screenState, setScreenState] = useState<AuthScreenState>('welcomeScreen');
   const [displayName, setDisplayName] = useState('');
@@ -49,6 +50,8 @@ export default function Index() {
   const [showImportPinModal, setShowImportPinModal] = useState(false);
   const [importedBackup, setImportedBackup] = useState<any>(null);
   const [importPinInput, setImportPinInput] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState('');
 
   const [isChecking, setIsChecking] = useState(true);
 
@@ -113,7 +116,7 @@ export default function Index() {
         await AsyncStorage.setItem('PUBLICK_KEY', JSON.stringify(pair.pub));
         await AsyncStorage.setItem('USER_PAIR', JSON.stringify(pair));
         await AsyncStorage.setItem('DISPLAY_NAME', displayName.trim());
-        
+
         //setScreenState('reveal_keysScreen');
         router.replace('/(tabs)/fariimaha');
       } catch (error) {
@@ -156,19 +159,20 @@ export default function Index() {
         alert("Cillad: Keypair-ka la galiyay ma ahan mid sax ah (waa inuu leeyahay pub iyo priv).");
         return;
       }
-      
+
       // Save display name and pair in AsyncStorage
       await AsyncStorage.setItem('PUBLICK_KEY', JSON.stringify(parsedPair.pub));
       await AsyncStorage.setItem('USER_PAIR', JSON.stringify(parsedPair));
       await AsyncStorage.setItem('DISPLAY_NAME', 'Isticmaale Sooceliyay');
-      
+
       router.replace('/(tabs)/fariimaha');
     } catch (e) {
       alert("Cillad: Ma awoodin inaan u aqriyo sidii JSON sax ah. Hubi inaad koobiyeysay qoraalka saxda ah.");
     }
   };
 
-  const performRestoreData = async (backup: any) => {
+  const performRestoreData = async (backup: any, setStatus?: (status: string) => void) => {
+    if (setStatus) setStatus("Aqoonsiga akoonka ayaa la soo celinayaa...");
     // Restoring account credentials
     await AsyncStorage.setItem('PUBLICK_KEY', JSON.stringify(backup.USER_PAIR.pub));
     await AsyncStorage.setItem('USER_PAIR', JSON.stringify(backup.USER_PAIR));
@@ -179,6 +183,7 @@ export default function Index() {
       // Restore binaries if present
       if (backup.binaries) {
         if (Platform.OS === 'web') {
+          if (setStatus) setStatus("Lifaaqyada ayaa la keydinayaa...");
           for (const msgId in backup.binaries) {
             const item = backup.binaries[msgId];
             if (item.base64) {
@@ -190,14 +195,22 @@ export default function Index() {
           }
         } else {
           // Mobile binary restore
+          if (setStatus) setStatus("Keydka faylasha mobile-ka ayaa la dhisayaa...");
           const voiceDir = `${FileSystem.documentDirectory}.dhambaal_voice/`;
           const filesDir = `${FileSystem.documentDirectory}Dhambaal_Files/`;
 
           // Ensure directories exist
-          await FileSystem.makeDirectoryAsync(voiceDir, { intermediates: true }).catch(() => {});
-          await FileSystem.makeDirectoryAsync(filesDir, { intermediates: true }).catch(() => {});
+          await FileSystem.makeDirectoryAsync(voiceDir, { intermediates: true }).catch(() => { });
+          await FileSystem.makeDirectoryAsync(filesDir, { intermediates: true }).catch(() => { });
+
+          const totalBinaries = Object.keys(backup.binaries).length;
+          let count = 0;
 
           for (const msgId in backup.binaries) {
+            count++;
+            if (setStatus && count % 5 === 0) {
+              setStatus(`Waxaa la rarayaa faylasha (${count}/${totalBinaries})...`);
+            }
             const item = backup.binaries[msgId];
             if (item.base64) {
               if (item.type === 'voice') {
@@ -215,6 +228,7 @@ export default function Index() {
             }
           }
 
+          if (setStatus) setStatus("Habaynta lifaaqyada fariimaha...");
           // Update fileUri and voiceNoteAudioUri in messages list to point to new local filesystem path
           if (backup.messages_list) {
             for (const m of backup.messages_list) {
@@ -231,6 +245,7 @@ export default function Index() {
         }
       }
 
+      if (setStatus) setStatus("Hagaajinta liisaska fariimaha iyo wicitaanada...");
       if (backup.contacts_list) {
         await AsyncStorage.setItem('rdhambaal_contacts_list', JSON.stringify(backup.contacts_list));
       }
@@ -245,9 +260,11 @@ export default function Index() {
       }
     }
 
+    if (setStatus) setStatus("Isku-xirka xogta iyo keydinta ...");
     // Hydrate GunDB graph with the new values
     await hydrateDatabase();
 
+    if (setStatus) setStatus("Dhammaystirmay!");
     alert("Guul: Xogtaadii waa lagu shubay aalada!");
     router.replace('/(tabs)/fariimaha');
   };
@@ -301,7 +318,19 @@ export default function Index() {
         return;
       }
 
-      await performRestoreData(backup);
+      setImportStatus("Raraya faylka legacy...");
+      setIsImporting(true);
+      setShowImportPinModal(true);
+
+      try {
+        await performRestoreData(backup, setImportStatus);
+        setShowImportPinModal(false);
+        setIsImporting(false);
+      } catch (err: any) {
+        setIsImporting(false);
+        setShowImportPinModal(false);
+        throw err;
+      }
     } catch (err: any) {
       console.error('[Import] Error importing backup:', err);
       alert(`Qalad: Ma awoodin inaan shubo faylka: ${err?.message || err}`);
@@ -315,19 +344,28 @@ export default function Index() {
       return;
     }
 
+    setIsImporting(true);
+    setImportStatus("Fure sireedka ayaa la hubinayaa...");
+    await new Promise(r => setTimeout(r, 100));
+
     try {
       // 1. Decrypt keypair using the PIN
       const decryptedPairStr = await Gun.SEA.decrypt(importedBackup.encryptedPair, pin);
       if (!decryptedPairStr) {
+        setIsImporting(false);
         alert("Cillad: Fure sireedku waa qalad ama faylka waa uu waxyeeloobay!");
         return;
       }
 
       const decryptedPair = typeof decryptedPairStr === 'string' ? JSON.parse(decryptedPairStr) : decryptedPairStr;
       if (!decryptedPair.pub || !decryptedPair.priv) {
+        setIsImporting(false);
         alert("Cillad: Furayaasha la helay ma ahan kuwo sax ah.");
         return;
       }
+
+      setImportStatus("Faylasha iyo fariimaha kale ayaa la furfurayaa...");
+      await new Promise(r => setTimeout(r, 100));
 
       // 2. Decrypt chat data lists using the PIN with high-performance stream cipher
       const decryptedDataStr = decryptString(importedBackup.encryptedData, pin);
@@ -357,16 +395,21 @@ export default function Index() {
         binaries: lists.binaries || {},
       };
 
+      setImportStatus("Fure sireedka cusub ayaa la keydinayaa...");
+      await new Promise(r => setTimeout(r, 100));
+
       // 4. Save PIN hash locally on the new device
       const pinHash = await Gun.SEA.work(pin, null, null, { name: 'SHA-256' });
       await AsyncStorage.setItem('rdhambaal_export_pin_hash', pinHash);
 
+      await performRestoreData(backup, setImportStatus);
+
       setShowImportPinModal(false);
       setImportedBackup(null);
       setImportPinInput('');
-
-      await performRestoreData(backup);
+      setIsImporting(false);
     } catch (e: any) {
+      setIsImporting(false);
       console.error('[Import] Error decrypting backup:', e);
       alert("Cillad: Fure sireedka aad gelisay waa qalad!");
     }
@@ -377,59 +420,79 @@ export default function Index() {
     return (
       <Modal visible={true} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
-          <TouchableOpacity 
-            style={styles.modalDismissArea} 
+          <TouchableOpacity
+            style={styles.modalDismissArea}
             onPress={() => {
-              setShowImportPinModal(false);
-              setImportedBackup(null);
-            }} 
-            activeOpacity={1} 
+              if (!isImporting) {
+                setShowImportPinModal(false);
+                setImportedBackup(null);
+              }
+            }}
+            activeOpacity={1}
           />
           <View style={[styles.modalContent, isWeb && styles.modalContentWeb]}>
             <View style={styles.modalHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Ionicons name="lock-closed-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.modalTitle}>Ku Fur Fure Sireedka</Text>
+                <Text style={styles.modalTitle}>
+                  {isImporting ? 'Soo Celinaya Xogta...' : 'Ku Fur Fure Sireedka'}
+                </Text>
               </View>
-              <TouchableOpacity 
-                onPress={() => {
-                  setShowImportPinModal(false);
-                  setImportedBackup(null);
-                }} 
-                style={styles.modalCloseBtn}
-              >
-                <Ionicons name="close" size={20} color="#FFFFFF" />
-              </TouchableOpacity>
+              {!isImporting && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowImportPinModal(false);
+                    setImportedBackup(null);
+                  }}
+                  style={styles.modalCloseBtn}
+                >
+                  <Ionicons name="close" size={20} color="#FFFFFF" />
+                </TouchableOpacity>
+              )}
             </View>
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-              <Text style={styles.modalSubtitle}>
-                Faylkan waa uu ku xiran yahay (waa encrypted). Fadlan geli fure sireedkii/password-kii aad ku ilaalisaay markaad xogta la baxaysay:
-              </Text>
+              {isImporting ? (
+                <View style={{ alignItems: 'center', paddingVertical: 32, gap: 16 }}>
+                  <ActivityIndicator size="large" color="#8B5CF6" />
+                  <Text style={[styles.modalTitle, { fontSize: 16, textAlign: 'center', marginTop: 12, color: '#A0AEC0' }]}>
+                    {importStatus}
+                  </Text>
+                  <Text style={[styles.modalSubtitle, { textAlign: 'center', color: '#EF4444', fontWeight: 'bold', marginTop: 8 }]}>
+                    Fadlan hawsha ha ka bixin oo ha xirin app-ka inta ay socoto!
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.modalSubtitle}>
+                    Faylkan waa uu ku xiran yahay (waa encrypted). Fadlan geli fure sireedkii/password-kii aad ku ilaalisaay markaad xogta la baxaysay:
+                  </Text>
 
-              <View style={styles.modalOptionGroup}>
-                <Text style={styles.keyLabel}>Fure Sireedka (Security PIN)</Text>
-                <TextInput
-                  style={styles.inputField}
-                  placeholder="Gali fure sireedka"
-                  placeholderTextColor="#A0AEC0"
-                  secureTextEntry
-                  value={importPinInput}
-                  onChangeText={setImportPinInput}
-                />
-              </View>
+                  <View style={styles.modalOptionGroup}>
+                    <Text style={styles.keyLabel}>Fure Sireedka (Security PIN)</Text>
+                    <TextInput
+                      style={styles.inputField}
+                      placeholder="Gali fure sireedka"
+                      placeholderTextColor="#A0AEC0"
+                      secureTextEntry
+                      value={importPinInput}
+                      onChangeText={setImportPinInput}
+                    />
+                  </View>
 
-              <TouchableOpacity 
-                style={[styles.primaryButton, { marginTop: 16 }]}
-                onPress={handleVerifyImportPin}
-                activeOpacity={0.8}
-              >
-                <LinearGradient
-                  colors={['#6366F1', '#8B5CF6']}
-                  style={styles.gradientButton}
-                >
-                  <Text style={styles.primaryButtonText}>Gali & Fur Xogta</Text>
-                </LinearGradient>
-              </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.primaryButton, { marginTop: 16 }]}
+                    onPress={handleVerifyImportPin}
+                    activeOpacity={0.8}
+                  >
+                    <LinearGradient
+                      colors={['#6366F1', '#8B5CF6']}
+                      style={styles.gradientButton}
+                    >
+                      <Text style={styles.primaryButtonText}>Gali & Fur Xogta</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </>
+              )}
             </ScrollView>
           </View>
         </View>
@@ -449,19 +512,19 @@ export default function Index() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Main Glassmorphism Card Wrapper */}
         <View style={[
-          styles.authCard, 
+          styles.authCard,
           isWeb ? styles.webCardWidth : styles.mobileCardWidth
         ]}>
-          
+
           {/* ============================================================== */}
           {/* 1. WELCOME SCREEN (KU SOO DHAWAADA)                             */}
           {/* ============================================================== */}
           {screenState === 'welcomeScreen' && (
             <View style={styles.stateWrapper}>
               <View style={styles.logoContainer}>
-                <Image 
-                  source={require('../assets/logo.png')} 
-                  style={styles.logoImage} 
+                <Image
+                  source={require('../assets/logo.png')}
+                  style={styles.logoImage}
                   resizeMode="contain"
                 />
                 <Text style={styles.appTitle}>Dhambaal</Text>
@@ -469,7 +532,7 @@ export default function Index() {
               </View>
 
               <View style={styles.buttonGroup}>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.primaryButton}
                   onPress={handleStartRegister}
                   activeOpacity={0.8}
@@ -485,9 +548,9 @@ export default function Index() {
                   </LinearGradient>
                 </TouchableOpacity>
 
-                
 
-                <TouchableOpacity 
+
+                <TouchableOpacity
                   style={styles.secondaryButton}
                   onPress={handleImportFile}
                   activeOpacity={0.8}
@@ -534,7 +597,7 @@ export default function Index() {
                 </View>
               </View>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.primaryButton, !displayName.trim() && styles.disabledButton]}
                 onPress={handleGenerateKeys}
                 disabled={!displayName.trim()}
@@ -548,14 +611,14 @@ export default function Index() {
                   <Text style={styles.primaryButtonText}>
                     Sii Soco <Text style={styles.ooText}>OO</Text> Abuur Furayaal
                   </Text>
-                  
+
                   <Ionicons name="chevron-forward-outline" size={18} color="#FFFFFF" style={styles.iconRight} />
                 </LinearGradient>
               </TouchableOpacity>
             </View>
           )}
 
-          
+
 
           {/* ============================================================== */}
           {/* 4. IMPORT PROFILE SCREEN (SOO CELIN)                            */}
@@ -585,7 +648,7 @@ export default function Index() {
                 />
               </View>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.primaryButton, !importWords.trim() && styles.disabledButton]}
                 onPress={handleRestoreAccount}
                 disabled={!importWords.trim()}
