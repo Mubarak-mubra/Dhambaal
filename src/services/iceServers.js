@@ -13,8 +13,8 @@ const TURN_PROVIDERS = [
       "turn:global.relay.metered.ca:443",
       "turns:global.relay.metered.ca:443?transport=tcp"
     ],
-    username: 'aea9290e5735182d313f605e',
-    credential: '7M7ON3oY3QGjcCNK'
+    username: 'metered.ca username',
+    credential: 'metered.ca password'
   },
   // OpenRelay.metered.ca (backup)
   {
@@ -23,8 +23,8 @@ const TURN_PROVIDERS = [
       'turn:openrelay.metered.ca:443',
       'turn:openrelay.metered.ca:3478'
     ],
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    username: 'openrelay username',
+    credential: 'openrelay password'
   },
 ];
 
